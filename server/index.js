@@ -1,254 +1,72 @@
-:root {
-  color-scheme: dark;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  background: #08101d;
-  color: #e2e8f0;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import sqlite3 from 'sqlite3';
+import express from 'express';
+import cors from 'cors';
+import { spawn } from 'child_process';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '..');
+const DATA_DIR = path.join(ROOT_DIR, 'data');
+const DB_PATH = path.join(DATA_DIR, 'recon.db');
+const app = express();
+const port = Number(process.env.PORT || 4000);
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new sqlite3.Database(DB_PATH);
+
+db.run(`CREATE TABLE IF NOT EXISTS scans (id INTEGER PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', output_dir TEXT, aggressive INTEGER NOT NULL DEFAULT 0, scope_file TEXT, resume_dir TEXT, diff_dir TEXT, log TEXT DEFAULT '', summary TEXT DEFAULT '{}', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+
+const targetName = (value) => String(value || '').trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+const validTarget = (value) => value.length <= 253 && /^[a-zA-Z0-9.-]+$/.test(value) && !value.startsWith('.') && !value.endsWith('.');
+const outputName = (target) => `recon_${target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
+
+function updateScan(id, fields) {
+  const keys = Object.keys(fields);
+  const values = keys.map((key) => fields[key]);
+  db.run(`UPDATE scans SET ${keys.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, [...values, new Date().toISOString(), id], (error) => { if (error) console.error(error.message); });
+}
+function readFile(file) { try { return fs.readFileSync(file, 'utf8'); } catch { return '{}'; } }
+function startScan(scan) {
+  const script = path.join(ROOT_DIR, 'scripts', 'EliteV11.sh');
+  if (!fs.existsSync(script)) return updateScan(scan.id, { status: 'failed', log: `Missing scanner: ${script}` });
+  const args = [script, scan.target];
+  if (scan.scope_file) args.push('--scope', scan.scope_file);
+  if (scan.resume_dir) args.push('--resume', scan.resume_dir);
+  if (scan.diff_dir) args.push('--diff', scan.diff_dir);
+  if (scan.aggressive) args.push('--aggressive');
+  const child = spawn('bash', args, { cwd: ROOT_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
+  let log = '';
+  const append = (chunk) => { log = `${log}${chunk}`.slice(-20000); updateScan(scan.id, { log }); };
+  child.stdout.on('data', append); child.stderr.on('data', append);
+  child.on('error', (error) => updateScan(scan.id, { status: 'failed', log: `${log}\n${error.message}` }));
+  child.on('close', (code) => {
+    const directory = scan.resume_dir || scan.output_dir;
+    const summary = readFile(path.join(ROOT_DIR, directory, 'findings', 'findings.json'));
+    updateScan(scan.id, { status: code === 0 ? 'completed' : 'failed', output_dir: directory, summary, log: `${log}\nProcess exited with code ${code}` });
+  });
 }
 
-* { box-sizing: border-box; }
-
-html, body, #root {
-  margin: 0;
-  min-width: 100%;
-  min-height: 100%;
-  background: #08101d;
-}
-
-body { min-height: 100vh; }
-
-button, input { font: inherit; }
-button { cursor: pointer; }
-
-.app-shell {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  min-height: 100vh;
-}
-
-.sidebar {
-  background: #0f172a;
-  border-right: 1px solid rgba(148, 163, 184, 0.2);
-  padding: 24px 18px;
-}
-
-.brand-block {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 22px;
-}
-
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #22c55e, #2563eb);
-  font-weight: 700;
-  color: white;
-}
-
-.brand-block h1 { margin: 0; font-size: 1.3rem; }
-.brand-block small { color: #93c5fd; }
-
-.scan-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.scan-form label {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  color: #cbd5e1;
-  font-size: 0.85rem;
-}
-
-.scan-form input {
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.8);
-  color: white;
-  padding: 10px 12px;
-}
-
-.checkbox-row {
-  flex-direction: row !important;
-  align-items: center;
-  gap: 10px !important;
-}
-
-.scan-form button,
-.ghost-button {
-  border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #16a34a, #2563eb);
-  color: white;
-  padding: 10px 14px;
-  font-weight: 600;
-}
-
-.ghost-button {
-  background: rgba(148, 163, 184, 0.14);
-}
-
-.main-panel { padding: 20px; }
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-
-.topbar h2 { margin: 0; }
-
-.scan-list {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.scan-item {
-  width: 100%;
-  text-align: left;
-  background: rgba(15, 23, 42, 0.72);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
-  padding: 14px 16px;
-  color: white;
-}
-
-.scan-item.active {
-  border-color: rgba(59, 130, 246, 0.7);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
-}
-
-.scan-meta-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.scan-target { font-weight: 600; }
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.status-running { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
-.status-queued { background: rgba(250, 204, 21, 0.18); color: #fde68a; }
-.status-completed { background: rgba(34, 197, 94, 0.18); color: #86efac; }
-.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-
-.scan-dir {
-  color: #93c5fd;
-  margin-top: 4px;
-  font-size: 0.76rem;
-}
-
-.details-panel {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 16px;
-  padding: 18px;
-}
-
-.details-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.details-header h3 { margin: 0; }
-
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.metric-card {
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 12px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.metric-card span { color: #cbd5e1; font-size: 0.76rem; }
-
-.panel-block { margin-top: 18px; }
-.panel-block h4 { margin: 0 0 12px; }
-
-pre {
-  background: rgba(2, 6, 23, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 12px;
-  padding: 14px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: #dbeafe;
-}
-
-.tag-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tag {
-  display: inline-flex;
-  padding: 5px 9px;
-  border-radius: 999px;
-  background: rgba(34, 197, 94, 0.12);
-  color: #bbf7d0;
-  border: 1px solid rgba(34, 197, 94, 0.2);
-}
-
-.error-box {
-  margin-top: 16px;
-  background: rgba(127, 29, 29, 0.3);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  color: #fecaca;
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-.loading, .empty-state {
-  padding: 18px;
-  border-radius: 12px;
-  border: 1px dashed rgba(148, 163, 184, 0.25);
-  color: #cbd5e1;
-}
-
-@media (max-width: 980px) {
-  .app-shell { grid-template-columns: 1fr; }
-  .sidebar {
-    border-right: none;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  }
-}
+app.get('/api/health', (_, res) => res.json({ ok: true, service: 'elite-recon-dashboard' }));
+app.get('/api/scans', (_, res) => db.all('SELECT * FROM scans ORDER BY created_at DESC', [], (error, rows) => error ? res.status(500).json({ error: error.message }) : res.json({ scans: rows })));
+app.get('/api/scans/:id', (req, res) => db.get('SELECT * FROM scans WHERE id = ?', [req.params.id], (error, row) => error ? res.status(500).json({ error: error.message }) : row ? res.json({ scan: row }) : res.status(404).json({ error: 'Scan not found' })));
+app.get('/api/scans/:id/report', (req, res) => db.get('SELECT output_dir, target FROM scans WHERE id = ?', [req.params.id], (error, scan) => {
+  if (error) return res.status(500).json({ error: error.message });
+  if (!scan) return res.status(404).json({ error: 'Scan not found' });
+  const report = path.resolve(ROOT_DIR, scan.output_dir, 'report', 'report.md');
+  if (!report.startsWith(`${ROOT_DIR}${path.sep}`) || !fs.existsSync(report)) return res.status(404).json({ error: 'Report is not available yet' });
+  res.download(report, `${scan.target}-report.md`);
+}));
+app.post('/api/scans', (req, res) => {
+  const { scopeFile = '', resumeDir = '', diffDir = '', aggressive = false } = req.body || {};
+  const target = targetName(req.body?.target);
+  if (!validTarget(target)) return res.status(400).json({ error: 'Enter a valid hostname, for example example.com.' });
+  const record = { target, status: 'queued', output_dir: resumeDir || outputName(target), aggressive: aggressive ? 1 : 0, scope_file: scopeFile, resume_dir: resumeDir, diff_dir: diffDir };
+  db.run('INSERT INTO scans (target,status,output_dir,aggressive,scope_file,resume_dir,diff_dir) VALUES (?,?,?,?,?,?,?)', Object.values(record), function (error) {
+    if (error) return res.status(500).json({ error: error.message });
+    const scan = { id: this.lastID, ...record }; updateScan(scan.id, { status: 'running', log: `Starting scan for ${target}` }); startScan(scan); res.status(201).json({ scan });
+  });
+});
+app.listen(port, () => console.log(`Recon dashboard API running on http://localhost:${port}`));

@@ -1,63 +1,64 @@
-# Architecture
+# Recon Dashboard
 
-This project is intentionally split into a small frontend and a backend service so the scan orchestration logic stays away from the browser.
+React + Vite dashboard and Express/SQLite API for launching and tracking authorized Elite Recon scans.
 
-## High-level flow
+## Start
 
-1. A user submits a target domain and optional scan arguments in the React UI.
-2. The frontend sends a request to the Express API at `/api/scans`.
-3. The backend validates the target and stores a scan record in SQLite.
-4. The backend invokes the Bash scanner script (`scripts/EliteV11.sh`) as a child process.
-5. The Bash script writes output into an output directory such as `recon_example.com_...`.
-6. The API captures stdout/stderr and updates the scan status while the process is running.
-7. When the scan ends, the backend reads any `findings.json` it created and stores the summary in SQLite.
-8. The frontend polls `/api/scans` and renders the latest scan results.
+```bash
+npm install
+npm run dev
+```
 
-## Components
+Open `http://localhost:5173`. The API is available at `http://localhost:4000`.
 
-### Frontend
+## Features
 
-- `src/App.jsx`: scan form, list of scans, selected scan view, and summary rendering.
-- `src/index.css`: layout and dashboard styling.
-- `index.html`: app entry point.
+- Launch scans with target, scope, resume, diff, and safe/aggressive options.
+- Store scan records, statuses, logs, and structured findings in SQLite.
+- Poll running scans automatically.
+- Filter scan history by status.
+- View OWASP category summaries and live output.
+- Download completed Markdown reports.
+- Correct JavaScript collection logic for `set -e` Bash scripts.
 
-### Backend
+## API
 
-- `server/index.js`: Express API, SQLite initialization, startup logic, and process launching.
+- `GET /api/health`
+- `GET /api/scans`
+- `GET /api/scans/:id`
+- `GET /api/scans/:id/report`
+- `POST /api/scans`
 
-### Scan runner
+Example:
 
-- `scripts/EliteV11.sh`: the Bash orchestrator that creates output files and performs the scanning steps.
+```bash
+curl -X POST http://localhost:4000/api/scans \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"example.com","aggressive":false}'
+```
 
-### Data storage
+## JavaScript download bug
 
-- SQLite database in `data/recon.db`
-- A table called `scans` stores:
-  - `id`
-  - `target`
-  - `status`
-  - `output_dir`
-  - `aggressive`
-  - `scope_file`
-  - `resume_dir`
-  - `diff_dir`
-  - `log`
-  - `summary`
-  - `created_at`
-  - `updated_at`
+Do not use this with `set -e`:
 
-## Why this structure works well
+```bash
+((count++))
+```
 
-- The browser never directly runs security tooling.
-- The server can enforce validation and safety checks before launching a scan.
-- Any output directory can be traced back to a specific database record.
-- The UI stays lightweight while the backend manages long-running shell processes.
+Use:
 
-## Production hardening ideas
+```bash
+count=$((count + 1))
+```
 
-- Add authentication before exposing the app.
-- Add rate limiting to scan creation.
-- Restrict targets to an allow-list.
-- Use a dedicated service account to run the Bash tools.
-- Isolate output by user and target domain.
-- Add audit logging and permission checks on output files.
+The extractor should also support cache-busted URLs:
+
+```bash
+grep -Eo 'https?://[^"[:space:]]+\.js([?#[^"[:space:]]*)?' "$OUT/urls/all_urls.txt" \
+  | sed 's/[),;>]$//' \
+  | sort -u > "$OUT/js/js_urls.txt"
+```
+
+## Security notice
+
+Only scan systems for which you have explicit authorization. The backend should be deployed behind authentication, target allow-listing, rate limiting, and isolated worker execution before production use. See [`docs/architecture.md`](docs/architecture.md).
