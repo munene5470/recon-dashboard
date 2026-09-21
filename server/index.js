@@ -1,0 +1,193 @@
+const fs = require('fs');
+const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
+const express = require('express');
+const cors = require('cors');
+const { spawn } = require('child_process');
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+const ROOT_DIR = process.cwd();
+const DB_PATH = path.join(ROOT_DIR, 'data', 'recon.db');
+
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+const db = new sqlite3.Database(DB_PATH);
+
+function initializeDatabase() {
+  db.serialize(() => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS scans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        target TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        output_dir TEXT,
+        aggressive INTEGER NOT NULL DEFAULT 0,
+        scope_file TEXT,
+        resume_dir TEXT,
+        diff_dir TEXT,
+        log TEXT DEFAULT '',
+        summary TEXT DEFAULT '{}',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  });
+}
+
+initializeDatabase();
+
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+
+app.get('/api/health', (_, res) => {
+  res.json({ ok: true, service: 'elite-recon-dashboard' });
+});
+
+app.get('/api/scans', (_, res) => {
+  db.all(
+    'SELECT * FROM scans ORDER BY created_at DESC',
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ scans: rows });
+    }
+  );
+});
+
+app.get('/api/scans/:id', (req, res) => {
+  db.get('SELECT * FROM scans WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Scan not found' });
+    res.json({ scan: row });
+  });
+});
+
+function updateScanStatus(id, fields) {
+  const updates = [];
+  const values = [];
+  Object.entries(fields).forEach(([key, value]) => {
+    updates.push(`${key} = ?`);
+    values.push(value);
+  });
+  values.push(new Date().toISOString());
+  values.push(id);
+
+  db.run(
+    `UPDATE scans SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`,
+    values,
+    (err) => {
+      if (err) console.error('Update scan failed:', err.message);
+    }
+  );
+}
+
+function readJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return '{}';
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return '{}';
+  }
+}
+
+function startScan(scan) {
+  const scriptPath = path.join(ROOT_DIR, 'scripts', 'EliteV11.sh');
+
+  if (!fs.existsSync(scriptPath)) {
+    updateScanStatus(scan.id, { status: 'failed', log: `Missing script: ${scriptPath}` });
+    return;
+  }
+
+  const args = [scriptPath, scan.target];
+  if (scan.scope_file) args.push('--scope', scan.scope_file);
+  if (scan.resume_dir) args.push('--resume', scan.resume_dir);
+  if (scan.diff_dir) args.push('--diff', scan.diff_dir);
+  if (scan.aggressive) args.push('--aggressive');
+
+  const proc = spawn('bash', args, {
+    cwd: ROOT_DIR,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  let logBuffer = '';
+
+  proc.stdout.on('data', (chunk) => {
+    const text = chunk.toString();
+    logBuffer += text;
+    updateScanStatus(scan.id, { log: logBuffer.slice(-20000) });
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    logBuffer += text;
+    updateScanStatus(scan.id, { log: logBuffer.slice(-20000) });
+  });
+
+  proc.on('error', (error) => {
+    updateScanStatus(scan.id, {
+      status: 'failed',
+      log: `${logBuffer}\n${error.message}`,
+    });
+  });
+
+  proc.on('close', (code) => {
+    const outputDir = scan.resume_dir || `recon_${scan.target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
+    const findingsPath = path.join(ROOT_DIR, outputDir, 'findings', 'findings.json');
+    const summaryText = readJsonIfExists(findingsPath);
+
+    updateScanStatus(scan.id, {
+      status: code === 0 ? 'completed' : 'failed',
+      output_dir: outputDir,
+      summary: summaryText || '{}',
+      log: `${logBuffer}\nProcess exited with code ${code}`,
+    });
+  });
+}
+
+app.post('/api/scans', (req, res) => {
+  const { target, scopeFile, resumeDir, diffDir, aggressive } = req.body || {};
+
+  if (!target || !target.trim()) {
+    return res.status(400).json({ error: 'A target domain is required.' });
+  }
+
+  const record = {
+    target: target.trim(),
+    status: 'queued',
+    output_dir: resumeDir || `recon_${target.trim()}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`,
+    aggressive: aggressive ? 1 : 0,
+    scope_file: scopeFile || '',
+    resume_dir: resumeDir || '',
+    diff_dir: diffDir || '',
+  };
+
+  db.run(
+    `INSERT INTO scans (target, status, output_dir, aggressive, scope_file, resume_dir, diff_dir, log, summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '', '{}')`,
+    [record.target, record.status, record.output_dir, record.aggressive, record.scope_file, record.resume_dir, record.diff_dir],
+    function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      const scan = {
+        id: this.lastID,
+        ...record,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      updateScanStatus(scan.id, { status: 'running', log: `Queued and starting scan for ${scan.target}` });
+      startScan(scan);
+      res.status(201).json({ scan });
+    }
+  );
+});
+
+app.listen(PORT, () => {
+  console.log(`Recon dashboard API running on http://localhost:${PORT}`);
+});
