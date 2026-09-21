@@ -1,45 +1,35 @@
-# Recon Dashboard
+# Architecture
 
-React + Vite dashboard and Express/SQLite API for launching and tracking authorized Elite Recon scans.
+The app is split into a frontend and a backend to keep security tooling away from the browser while still making results easy to view.
 
-## Start
+## Components
 
-```bash
-npm install
-npm run dev
-```
+- `src/App.jsx` — React UI for launching scans, filtering results, and showing structured findings.
+- `server/index.js` — Express API, SQLite storage, target validation, and child-process management.
+- `scripts/EliteV11.sh` — Bash scan entrypoint.
+- `data/recon.db` — SQLite file created automatically on first start.
 
-Open `http://localhost:5173`. The API is available at `http://localhost:4000`.
+## Execution flow
 
-## Features
+1. User submits a target from the dashboard.
+2. API validates the domain and stores a new scan row in SQLite.
+3. API launches `scripts/EliteV11.sh` as a child process.
+4. stdout/stderr are captured and stored as the live log.
+5. The scanner writes `findings/findings.json` and the report under that target's output directory.
+6. The frontend polls the API every 5 seconds.
+7. The user can view findings and download the Markdown report.
 
-- Launch scans with target, scope, resume, diff, and safe/aggressive options.
-- Store scan records, statuses, logs, and structured findings in SQLite.
-- Poll running scans automatically.
-- Filter scan history by status.
-- View OWASP category summaries and live output.
-- Download completed Markdown reports.
-- Correct JavaScript collection logic for `set -e` Bash scripts.
+## Operational notes
 
-## API
+- This project should only be deployed behind authentication.
+- Enforce an allow-list of domains to scan.
+- Keep the output directories under a controlled root.
+- Use least-privilege service accounts and restrict shell execution.
+- Protect report downloads with auth and rate limiting.
 
-- `GET /api/health`
-- `GET /api/scans`
-- `GET /api/scans/:id`
-- `GET /api/scans/:id/report`
-- `POST /api/scans`
+## JavaScript fix
 
-Example:
-
-```bash
-curl -X POST http://localhost:4000/api/scans \
-  -H 'Content-Type: application/json' \
-  -d '{"target":"example.com","aggressive":false}'
-```
-
-## JavaScript download bug
-
-Do not use this with `set -e`:
+Under `set -e`, this expression can exit early:
 
 ```bash
 ((count++))
@@ -51,14 +41,8 @@ Use:
 count=$((count + 1))
 ```
 
-The extractor should also support cache-busted URLs:
+And the JS URL extraction should support query strings and hash fragments:
 
 ```bash
-grep -Eo 'https?://[^"[:space:]]+\.js([?#[^"[:space:]]*)?' "$OUT/urls/all_urls.txt" \
-  | sed 's/[),;>]$//' \
-  | sort -u > "$OUT/js/js_urls.txt"
+grep -Eo 'https?://[^"[:space:]]+\.js([?#[^"[:space:]]*)?'
 ```
-
-## Security notice
-
-Only scan systems for which you have explicit authorization. The backend should be deployed behind authentication, target allow-listing, rate limiting, and isolated worker execution before production use. See [`docs/architecture.md`](docs/architecture.md).
