@@ -1,0 +1,13 @@
+version: '3.9'
+services:
+  recon-dashboard:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      JWT_SECRET: change-me-in-production
+      ALLOWED_TARGETS: example.com,app.example.com
+      NODE_ENV: production
+    volumes:
+      - ./data:/app/data
