@@ -1,193 +1,254 @@
-const fs = require('fs');
-const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
-const express = require('express');
-const cors = require('cors');
-const { spawn } = require('child_process');
-
-const app = express();
-const PORT = process.env.PORT || 4000;
-const ROOT_DIR = process.cwd();
-const DB_PATH = path.join(ROOT_DIR, 'data', 'recon.db');
-
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-
-const db = new sqlite3.Database(DB_PATH);
-
-function initializeDatabase() {
-  db.serialize(() => {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        target TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'queued',
-        output_dir TEXT,
-        aggressive INTEGER NOT NULL DEFAULT 0,
-        scope_file TEXT,
-        resume_dir TEXT,
-        diff_dir TEXT,
-        log TEXT DEFAULT '',
-        summary TEXT DEFAULT '{}',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-  });
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  background: #08101d;
+  color: #e2e8f0;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-initializeDatabase();
+* { box-sizing: border-box; }
 
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-
-app.get('/api/health', (_, res) => {
-  res.json({ ok: true, service: 'elite-recon-dashboard' });
-});
-
-app.get('/api/scans', (_, res) => {
-  db.all(
-    'SELECT * FROM scans ORDER BY created_at DESC',
-    [],
-    (err, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ scans: rows });
-    }
-  );
-});
-
-app.get('/api/scans/:id', (req, res) => {
-  db.get('SELECT * FROM scans WHERE id = ?', [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Scan not found' });
-    res.json({ scan: row });
-  });
-});
-
-function updateScanStatus(id, fields) {
-  const updates = [];
-  const values = [];
-  Object.entries(fields).forEach(([key, value]) => {
-    updates.push(`${key} = ?`);
-    values.push(value);
-  });
-  values.push(new Date().toISOString());
-  values.push(id);
-
-  db.run(
-    `UPDATE scans SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`,
-    values,
-    (err) => {
-      if (err) console.error('Update scan failed:', err.message);
-    }
-  );
+html, body, #root {
+  margin: 0;
+  min-width: 100%;
+  min-height: 100%;
+  background: #08101d;
 }
 
-function readJsonIfExists(filePath) {
-  if (!fs.existsSync(filePath)) return '{}';
-  try {
-    return fs.readFileSync(filePath, 'utf8');
-  } catch {
-    return '{}';
+body { min-height: 100vh; }
+
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #0f172a;
+  border-right: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 24px 18px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #22c55e, #2563eb);
+  font-weight: 700;
+  color: white;
+}
+
+.brand-block h1 { margin: 0; font-size: 1.3rem; }
+.brand-block small { color: #93c5fd; }
+
+.scan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scan-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.scan-form input {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.8);
+  color: white;
+  padding: 10px 12px;
+}
+
+.checkbox-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px !important;
+}
+
+.scan-form button,
+.ghost-button {
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #16a34a, #2563eb);
+  color: white;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
+.ghost-button {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.main-panel { padding: 20px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.topbar h2 { margin: 0; }
+
+.scan-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.scan-item {
+  width: 100%;
+  text-align: left;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: white;
+}
+
+.scan-item.active {
+  border-color: rgba(59, 130, 246, 0.7);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
+}
+
+.scan-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scan-target { font-weight: 600; }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-running { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+.status-queued { background: rgba(250, 204, 21, 0.18); color: #fde68a; }
+.status-completed { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+.scan-dir {
+  color: #93c5fd;
+  margin-top: 4px;
+  font-size: 0.76rem;
+}
+
+.details-panel {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.details-header h3 { margin: 0; }
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.metric-card {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-card span { color: #cbd5e1; font-size: 0.76rem; }
+
+.panel-block { margin-top: 18px; }
+.panel-block h4 { margin: 0 0 12px; }
+
+pre {
+  background: rgba(2, 6, 23, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #dbeafe;
+}
+
+.tag-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.error-box {
+  margin-top: 16px;
+  background: rgba(127, 29, 29, 0.3);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.loading, .empty-state {
+  padding: 18px;
+  border-radius: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+}
+
+@media (max-width: 980px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
   }
 }
-
-function startScan(scan) {
-  const scriptPath = path.join(ROOT_DIR, 'scripts', 'EliteV11.sh');
-
-  if (!fs.existsSync(scriptPath)) {
-    updateScanStatus(scan.id, { status: 'failed', log: `Missing script: ${scriptPath}` });
-    return;
-  }
-
-  const args = [scriptPath, scan.target];
-  if (scan.scope_file) args.push('--scope', scan.scope_file);
-  if (scan.resume_dir) args.push('--resume', scan.resume_dir);
-  if (scan.diff_dir) args.push('--diff', scan.diff_dir);
-  if (scan.aggressive) args.push('--aggressive');
-
-  const proc = spawn('bash', args, {
-    cwd: ROOT_DIR,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false,
-  });
-
-  let logBuffer = '';
-
-  proc.stdout.on('data', (chunk) => {
-    const text = chunk.toString();
-    logBuffer += text;
-    updateScanStatus(scan.id, { log: logBuffer.slice(-20000) });
-  });
-
-  proc.stderr.on('data', (chunk) => {
-    const text = chunk.toString();
-    logBuffer += text;
-    updateScanStatus(scan.id, { log: logBuffer.slice(-20000) });
-  });
-
-  proc.on('error', (error) => {
-    updateScanStatus(scan.id, {
-      status: 'failed',
-      log: `${logBuffer}\n${error.message}`,
-    });
-  });
-
-  proc.on('close', (code) => {
-    const outputDir = scan.resume_dir || `recon_${scan.target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
-    const findingsPath = path.join(ROOT_DIR, outputDir, 'findings', 'findings.json');
-    const summaryText = readJsonIfExists(findingsPath);
-
-    updateScanStatus(scan.id, {
-      status: code === 0 ? 'completed' : 'failed',
-      output_dir: outputDir,
-      summary: summaryText || '{}',
-      log: `${logBuffer}\nProcess exited with code ${code}`,
-    });
-  });
-}
-
-app.post('/api/scans', (req, res) => {
-  const { target, scopeFile, resumeDir, diffDir, aggressive } = req.body || {};
-
-  if (!target || !target.trim()) {
-    return res.status(400).json({ error: 'A target domain is required.' });
-  }
-
-  const record = {
-    target: target.trim(),
-    status: 'queued',
-    output_dir: resumeDir || `recon_${target.trim()}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`,
-    aggressive: aggressive ? 1 : 0,
-    scope_file: scopeFile || '',
-    resume_dir: resumeDir || '',
-    diff_dir: diffDir || '',
-  };
-
-  db.run(
-    `INSERT INTO scans (target, status, output_dir, aggressive, scope_file, resume_dir, diff_dir, log, summary)
-     VALUES (?, ?, ?, ?, ?, ?, ?, '', '{}')`,
-    [record.target, record.status, record.output_dir, record.aggressive, record.scope_file, record.resume_dir, record.diff_dir],
-    function (err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      const scan = {
-        id: this.lastID,
-        ...record,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      updateScanStatus(scan.id, { status: 'running', log: `Queued and starting scan for ${scan.target}` });
-      startScan(scan);
-      res.status(201).json({ scan });
-    }
-  );
-});
-
-app.listen(PORT, () => {
-  console.log(`Recon dashboard API running on http://localhost:${PORT}`);
-});

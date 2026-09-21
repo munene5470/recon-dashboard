@@ -1,146 +1,63 @@
-# Recon Dashboard
+# Architecture
 
-This repository contains a React + Vite frontend and an Express + SQLite backend for launching and tracking Elite Recon scans. The application is designed to trigger the Bash-based recon script, capture scan logs and summaries, and present findings in a simple dashboard.
+This project is intentionally split into a small frontend and a backend service so the scan orchestration logic stays away from the browser.
 
-## What this project includes
+## High-level flow
 
-- React + Vite frontend for the web UI
-- Express API for scan orchestration
-- SQLite database for persistent scan metadata and summary storage
-- Bash scan launcher for `EliteV11.sh`
-- OWASP-style findings summary in the UI
-- Sample output and documentation for the JavaScript download fix
+1. A user submits a target domain and optional scan arguments in the React UI.
+2. The frontend sends a request to the Express API at `/api/scans`.
+3. The backend validates the target and stores a scan record in SQLite.
+4. The backend invokes the Bash scanner script (`scripts/EliteV11.sh`) as a child process.
+5. The Bash script writes output into an output directory such as `recon_example.com_...`.
+6. The API captures stdout/stderr and updates the scan status while the process is running.
+7. When the scan ends, the backend reads any `findings.json` it created and stores the summary in SQLite.
+8. The frontend polls `/api/scans` and renders the latest scan results.
 
-## Tech stack
+## Components
 
-- Frontend: React 18 + Vite
-- Backend: Node.js + Express
-- Database: SQLite3
-- Target scanner: Bash script runner for Elite Recon
+### Frontend
 
-## Quick start
+- `src/App.jsx`: scan form, list of scans, selected scan view, and summary rendering.
+- `src/index.css`: layout and dashboard styling.
+- `index.html`: app entry point.
 
-1. Install dependencies:
+### Backend
 
-```bash
-npm install
-```
+- `server/index.js`: Express API, SQLite initialization, startup logic, and process launching.
 
-2. Start the app in development mode:
+### Scan runner
 
-```bash
-npm run dev
-```
+- `scripts/EliteV11.sh`: the Bash orchestrator that creates output files and performs the scanning steps.
 
-3. Open the app in a browser:
+### Data storage
 
-- Frontend: http://localhost:5173
-- API health check: http://localhost:4000/api/health
+- SQLite database in `data/recon.db`
+- A table called `scans` stores:
+  - `id`
+  - `target`
+  - `status`
+  - `output_dir`
+  - `aggressive`
+  - `scope_file`
+  - `resume_dir`
+  - `diff_dir`
+  - `log`
+  - `summary`
+  - `created_at`
+  - `updated_at`
 
-## Project layout
+## Why this structure works well
 
-```text
-.
-├── src/
-│   ├── App.jsx
-│   ├── index.css
-│   └── main.jsx
-├── server/
-│   └── index.js
-├── scripts/
-│   └── EliteV11.sh
-├── docs/
-│   └── architecture.md
-├── index.html
-├── package.json
-├── vite.config.js
-├── .gitignore
-├── README.md
-└── data/
-    └── recon.db
-```
+- The browser never directly runs security tooling.
+- The server can enforce validation and safety checks before launching a scan.
+- Any output directory can be traced back to a specific database record.
+- The UI stays lightweight while the backend manages long-running shell processes.
 
-## API endpoints
+## Production hardening ideas
 
-### GET /api/health
-Returns service status.
-
-### GET /api/scans
-Returns all stored scans, newest first.
-
-### GET /api/scans/:id
-Returns one scan record.
-
-### POST /api/scans
-Creates a scan request and starts the target script.
-
-Example request body:
-
-```json
-{
-  "target": "example.com",
-  "scopeFile": "/path/to/scope.txt",
-  "resumeDir": "",
-  "diffDir": "",
-  "aggressive": false
-}
-```
-
-## Important JavaScript fix
-
-The original JavaScript download loop had a critical bug:
-
-```bash
-((count++))
-```
-
-This expression can return a non-zero result in shell arithmetic, which is exactly the kind of thing that triggers `set -e` and aborts the script early. That is why JS downloads can appear to stop before downloading anything.
-
-Use this instead:
-
-```bash
-count=$((count + 1))
-```
-
-or:
-
-```bash
-((++count))
-```
-
-The URL extraction logic was also too narrow. The original pattern only matched `.js` strings that ended immediately in `.js`, which misses common cases like:
-
-- `/assets/app.js?v=123`
-- `/main.js#chunk`
-- URLs with query strings or fragments
-
-Use a safer regex such as:
-
-```bash
-grep -Eo 'https?://[^"[:space:]]+\.js([?#[^"[:space:]]*)?' "$OUT/urls/all_urls.txt" \
-  | sed 's/[),;>]$//' \
-  | sort -u > "$OUT/js/js_urls.txt"
-```
-
-This preserves query/hash suffixes and prevents the extraction stage from silently dropping valid JavaScript files.
-
-## Security and operations notes
-
-- The dashboard should not be exposed publicly without authentication.
-- Restrict the `target` field to approved domains or an allow-list in production.
-- Only run aggressive recon modules when you have explicit authorization.
-- Store output under a controlled directory and avoid unrestricted file writes.
-
-## Production deployment advice
-
-For production use, add the following before exposing the app:
-
-- authentication/authorization middleware
-- rate limiting on scan creation requests
-- validation of target names against an allow-list
-- separate user accounts and per-user scan history
-- safe file system isolation for each output directory
-
-## License
-
-This project is released under the MIT license.
+- Add authentication before exposing the app.
+- Add rate limiting to scan creation.
+- Restrict targets to an allow-list.
+- Use a dedicated service account to run the Bash tools.
+- Isolate output by user and target domain.
+- Add audit logging and permission checks on output files.
