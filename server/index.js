@@ -79,7 +79,7 @@ app.use(express.json({ limit: '2mb' }));
 
 const cleanTarget = (value) => String(value || '').trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
 const validTarget = (value) => /^[a-zA-Z0-9.-]+$/.test(value) && value.length <= 253 && !value.startsWith('.') && !value.endsWith('.');
-const outputName = (target) => `recon_${target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
+const outputName = (target) => path.join('recon-output', `recon_${target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`);
 
 function updateScan(id, fields) {
   const keys = Object.keys(fields);
