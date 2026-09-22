@@ -15,6 +15,6 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/index.html ./index.html
-COPY --from=build /app/vite.config.js ./vite.config.js
+RUN mkdir -p /app/data
 EXPOSE 3000
 CMD ["node", "server/index.js"]
