@@ -16,12 +16,39 @@ log(){ echo "[$(date +%H:%M:%S)] $1" | tee -a "$OUT/logs/run.log"; }
 stage(){ echo "STAGE_EVENT|$1|$2|$3"; }
 normalize(){ sed -E 's#^[[:space:]]+##; s#[[:space:]]+$##; s#^https?://##; s#^[*.]+##; s#/.*##' | tr '[:upper:]' '[:lower:]' | grep -E "(^|\.)${TARGET//./\\.}$" || true; }
 record_tool(){ printf '{"tool":"%s","status":"%s","count":%s}\n' "$1" "$2" "${3:-0}" >> "$OUT/subs/tool-status.ndjson"; }
-run_tool(){ local name="$1"; shift; local file="$OUT/subs/raw/$name.txt"; stage 01-subdomains running "Running tool: $name"; log "Running tool: $name"; if "$@" > "$file" 2> "$OUT/subs/raw/$name.err"; then normalize < "$file" > "$file.clean" || true; mv "$file.clean" "$file"; record_tool "$name" completed "$(wc -l < "$file" | tr -d ' ')"; log "$name completed"; else record_tool "$name" failed 0; log "$name failed; see subs/raw/$name.err"; fi; }
-log "Staged pipeline started for $TARGET"; stage 01-subdomains running "Preparing passive enumeration"; : > "$OUT/subs/tool-status.ndjson"; printf '%s\n' "$TARGET" > "$OUT/subs/raw/seed.txt"; record_tool seed completed 1
-if command -v curl >/dev/null 2>&1; then run_tool crtsh curl -fsSL --max-time 20 "https://crt.sh/?q=%25.${TARGET}&output=json"; else record_tool crtsh skipped 0; fi
-if [[ -s "$OUT/subs/raw/crtsh.txt" ]] && command -v jq >/dev/null 2>&1; then jq -r '.[].name_value' "$OUT/subs/raw/crtsh.txt" 2>/dev/null | normalize > "$OUT/subs/raw/crtsh.clean" || true; mv "$OUT/subs/raw/crtsh.clean" "$OUT/subs/raw/crtsh.txt"; sed -i '/"tool":"crtsh"/d' "$OUT/subs/tool-status.ndjson"; record_tool crtsh completed "$(wc -l < "$OUT/subs/raw/crtsh.txt" | tr -d ' ')"; fi
-if command -v subfinder >/dev/null 2>&1; then run_tool subfinder subfinder -silent -d "$TARGET"; else record_tool subfinder skipped 0; log "Skipping tool: subfinder (not installed)"; fi
-if command -v assetfinder >/dev/null 2>&1; then run_tool assetfinder assetfinder --subs-only "$TARGET"; else record_tool assetfinder skipped 0; log "Skipping tool: assetfinder (not installed)"; fi
+run_text_tool(){
+  local name="$1"; shift; local file="$OUT/subs/raw/$name.txt"
+  stage 01-subdomains running "Running tool: $name"; log "Running tool: $name"
+  if "$@" > "$file" 2> "$OUT/subs/raw/$name.err"; then
+    normalize < "$file" > "$file.clean" || true; mv "$file.clean" "$file"
+    record_tool "$name" completed "$(wc -l < "$file" | tr -d ' ')"; log "$name completed"
+  else
+    record_tool "$name" failed 0; log "$name failed; see subs/raw/$name.err"
+  fi
+}
+run_crtsh(){
+  local file="$OUT/subs/raw/crtsh.txt"; local err="$OUT/subs/raw/crtsh.err"
+  stage 01-subdomains running "Running tool: crt.sh"; log "Running tool: crt.sh"
+  if curl -fsSL --retry 2 --connect-timeout 8 --max-time 30 "https://crt.sh/?q=%25.${TARGET}&output=json" > "$file" 2> "$err"; then
+    if jq -e . >/dev/null 2> "$err.jq" < "$file"; then
+      jq -r '.[].name_value // empty' "$file" | normalize > "$file.clean" || true
+      mv "$file.clean" "$file"
+      record_tool crtsh completed "$(wc -l < "$file" | tr -d ' ')"; log "crt.sh completed"
+    else
+      : > "$file"; record_tool crtsh failed 0; log "crt.sh returned invalid JSON; see subs/raw/crtsh.jq"
+      mv "$err.jq" "$OUT/subs/raw/crtsh.jq"
+    fi
+  else
+    : > "$file"; record_tool crtsh failed 0; log "crt.sh failed; see subs/raw/crtsh.err"
+  fi
+}
+log "Staged pipeline started for $TARGET"
+stage 01-subdomains running "Preparing passive enumeration"
+: > "$OUT/subs/tool-status.ndjson"
+printf '%s\n' "$TARGET" > "$OUT/subs/raw/seed.txt"; record_tool seed completed 1
+if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then run_crtsh; else record_tool crtsh skipped 0; log "Skipping crt.sh: curl or jq unavailable"; fi
+if command -v subfinder >/dev/null 2>&1; then run_text_tool subfinder subfinder -silent -d "$TARGET"; else record_tool subfinder skipped 0; log "Skipping subfinder: not installed"; fi
+if command -v assetfinder >/dev/null 2>&1; then run_text_tool assetfinder assetfinder --subs-only "$TARGET"; else record_tool assetfinder skipped 0; log "Skipping assetfinder: not installed"; fi
 { cat "$OUT/subs/raw/"*.txt 2>/dev/null || true; printf '%s\n' "$TARGET"; } | normalize | sort -u > "$OUT/subs/all.txt"
 TOTAL=$(wc -l < "$OUT/subs/all.txt" | tr -d ' ')
 cat > "$OUT/subs/comparison.json" <<EOF
