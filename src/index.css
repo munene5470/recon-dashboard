@@ -18,8 +18,6 @@ button { cursor: pointer; }
 .scan-form { display: flex; flex-direction: column; gap: 14px; }
 .scan-form label { display: flex; flex-direction: column; gap: 7px; color: #cbd5e1; font-size: .84rem; }
 input, select { border: 1px solid #334155; border-radius: 9px; background: #111c30; color: white; padding: 10px 11px; }
-.checkbox-row { flex-direction: row !important; align-items: center; gap: 10px !important; }
-.checkbox-row input { accent-color: #22c55e; }
 button { border: 0; border-radius: 9px; padding: 10px 14px; font-weight: 700; color: white; background: linear-gradient(135deg,#16a34a,#2563eb); }
 button:disabled { opacity: .55; cursor: wait; }
 .ghost-button { background: #17243a; border: 1px solid #334155; }
@@ -39,9 +37,9 @@ button:disabled { opacity: .55; cursor: wait; }
 .status-queued { background: #713f12; color: #fef08a; }
 .status-completed { background: #14532d; color: #bbf7d0; }
 .status-failed { background: #7f1d1d; color: #fecaca; }
+.status-skipped { background: #374151; color: #e5e7eb; }
 .details-panel { background: #0f172a; border: 1px solid #263449; border-radius: 15px; padding: 18px; }
 .details-header { align-items: flex-start; }
-.action-row { display: flex; align-items: center; gap: 10px; }
 .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 10px; margin: 20px 0; }
 .metric-card { display: flex; flex-direction: column; gap: 7px; padding: 13px; border: 1px solid #263449; border-radius: 10px; background: #111c30; }
 .metric-card span { font-size: .76rem; color: #94a3b8; }
@@ -53,4 +51,21 @@ pre { overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 14
 .tag { border: 1px solid #166534; border-radius: 999px; padding: 5px 9px; color: #bbf7d0; background: #052e16; }
 .error-box { margin-top: 16px; padding: 11px; border-radius: 9px; border: 1px solid #991b1b; background: #450a0a; color: #fecaca; }
 .empty-state { padding: 18px; border: 1px dashed #334155; border-radius: 10px; color: #cbd5e1; }
-@media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } .sidebar { border-right: 0; border-bottom: 1px solid #263449; } .main-panel { padding: 16px; } .details-header { flex-direction: column; } .action-row { width: 100%; justify-content: space-between; } }
+.side-note { margin-top: 16px; color: #cbd5e1; line-height: 1.5; }
+.progress-label { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; color: #cbd5e1; }
+.progress-track { margin-top: 8px; height: 12px; border-radius: 999px; background: #111c30; overflow: hidden; }
+.progress-track > div { height: 100%; background: linear-gradient(90deg,#16a34a,#3b82f6); border-radius: 999px; }
+.stage-list { display: grid; gap: 10px; margin-top: 20px; }
+.stage-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 12px; border: 1px solid #263449; border-radius: 12px; background: #101b2d; padding: 12px 14px; }
+.stage-number { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; background: #0b1220; color: #93c5fd; font-weight: 700; }
+.stage-main { display: flex; flex-direction: column; gap: 4px; }
+.stage-main strong { font-size: .96rem; }
+.stage-main small { color: #94a3b8; }
+.stage-status { display: inline-flex; padding: 5px 8px; border-radius: 999px; font-size: .7rem; font-weight: 800; text-transform: uppercase; }
+.stage-queued { background: #713f12; color: #fef08a; }
+.stage-running { background: #1e3a8a; color: #bfdbfe; }
+.stage-completed { background: #14532d; color: #bbf7d0; }
+.stage-failed { background: #7f1d1d; color: #fecaca; }
+.stage-skipped { background: #374151; color: #e5e7eb; }
+.running-note { color: #bfdbfe; margin: 12px 0 0; }
+@media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } .sidebar { border-right: 0; border-bottom: 1px solid #263449; } .main-panel { padding: 16px; } .details-header { flex-direction: column; align-items: flex-start; } .stage-row { grid-template-columns: 42px 1fr; } .stage-status { grid-column: 2; justify-self: start; } }

@@ -1,10 +1,31 @@
 # Staged Docker workflow
 
-## What changed
+## What this foundation includes
 
-The dashboard now models the recon process as a dependency-ordered pipeline. Each scan creates 16 stage records in SQLite, and the UI displays every phase as queued, running, completed, failed, or skipped.
+- SQLite-backed scan records
+- SQLite-backed stage tracking for all 16 pipeline phases
+- dashboard display for stage status, progress, and logs
+- safe staged runner that emits stage events
+- Docker-first setup
 
-The current foundation runner implements Phase 1 as a smoke/foundation stage. Phases 2–16 are explicitly marked skipped with their required dependency. This is intentional: real tools will be added one phase at a time so an error in one tool does not hide failures elsewhere.
+## Pipeline phases
+
+1. 01-subdomains
+2. 02-dns
+3. 03-alive
+4. 04-ports
+5. 05-crawl
+6. 06-params
+7. 07-tech
+8. 08-tls
+9. 09-api
+10. 10-misconfig
+11. 11-injection
+12. 12-access-control
+13. 13-takeover
+14. 14-secrets
+15. 15-nuclei
+16. 16-report
 
 ## Run with Docker
 
@@ -13,26 +34,10 @@ docker compose build
 docker compose up
 ```
 
-Open `http://localhost:3000`.
+Open:
 
-Check the API:
-
-```bash
-curl http://localhost:3000/api/health
-```
-
-Start a scan from the dashboard or API:
-
-```bash
-curl -X POST http://localhost:3000/api/scans \
-  -H 'Content-Type: application/json' \
-  -d '{"target":"example.com"}'
-```
-
-View stages:
-
-```bash
-curl http://localhost:3000/api/scans/1 | jq
+```text
+http://localhost:4000
 ```
 
 ## Local runner test
@@ -42,18 +47,4 @@ bash -n scripts/recon-runner.sh
 ./scripts/recon-runner.sh example.com --out /tmp/recon-example
 ```
 
-## Pipeline contract
-
-Each stage must:
-
-1. declare its required input files;
-2. write tool-specific output files;
-3. preserve raw output;
-4. write normalized/comparison output;
-5. emit a stage status event;
-6. refuse to run when required input is empty;
-7. never silently convert a tool failure into a successful stage.
-
-The next implementation stage is Phase 1 enumeration using subfinder, assetfinder, amass, crt.sh, waybackurls, and gau, followed by comparison and DNS filtering.
-
-Only scan domains for which you have explicit authorization. Keep Docker bound to a protected network while active tools are being added.
+This creates stage output and a safe `findings.json` skeleton. The next implementation will replace the foundation stage with real subdomain enumeration and comparison logic.

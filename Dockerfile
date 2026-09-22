@@ -15,6 +15,6 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/index.html ./index.html
-RUN mkdir -p /app/data
-EXPOSE 3000
+RUN mkdir -p /app/data /app/recon-output
+EXPOSE 4000
 CMD ["node", "server/index.js"]

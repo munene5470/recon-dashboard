@@ -35,45 +35,50 @@ const STAGES = [
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS scans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    target TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued',
-    output_dir TEXT,
-    aggressive INTEGER NOT NULL DEFAULT 0,
-    scope_file TEXT,
-    resume_dir TEXT,
-    diff_dir TEXT,
-    log TEXT DEFAULT '',
-    summary TEXT DEFAULT '{}',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS scan_stages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_id INTEGER NOT NULL,
-    stage_key TEXT NOT NULL,
-    phase INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    priority TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued',
-    message TEXT DEFAULT '',
-    input_files TEXT DEFAULT '[]',
-    output_files TEXT DEFAULT '[]',
-    started_at DATETIME,
-    completed_at DATETIME,
-    exit_code INTEGER,
-    FOREIGN KEY(scan_id) REFERENCES scans(id),
-    UNIQUE(scan_id, stage_key)
-  )`);
-});
+function initializeDatabase() {
+  db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      output_dir TEXT,
+      aggressive INTEGER NOT NULL DEFAULT 0,
+      scope_file TEXT,
+      resume_dir TEXT,
+      diff_dir TEXT,
+      log TEXT DEFAULT '',
+      summary TEXT DEFAULT '{}',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS scan_stages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scan_id INTEGER NOT NULL,
+      stage_key TEXT NOT NULL,
+      phase INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      priority TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      message TEXT DEFAULT '',
+      input_files TEXT DEFAULT '[]',
+      output_files TEXT DEFAULT '[]',
+      started_at DATETIME,
+      completed_at DATETIME,
+      exit_code INTEGER,
+      FOREIGN KEY(scan_id) REFERENCES scans(id),
+      UNIQUE(scan_id, stage_key)
+    )`);
+  });
+}
+
+initializeDatabase();
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
 const cleanTarget = (value) => String(value || '').trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
-const validTarget = (value) => value.length <= 253 && /^[a-zA-Z0-9.-]+$/.test(value) && !value.startsWith('.') && !value.endsWith('.');
+const validTarget = (value) => /^[a-zA-Z0-9.-]+$/.test(value) && value.length <= 253 && !value.startsWith('.') && !value.endsWith('.');
 const outputName = (target) => `recon_${target}_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
 
 function updateScan(id, fields) {
@@ -96,77 +101,123 @@ function createStages(scanId) {
   statement.finalize();
 }
 
-function readFile(file) {
-  try { return fs.readFileSync(file, 'utf8'); } catch { return '{}'; }
+function readJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return '{}';
+  try { return fs.readFileSync(filePath, 'utf8'); } catch { return '{}'; }
 }
 
 function startScan(scan) {
-  const script = path.join(ROOT_DIR, 'scripts', 'recon-runner.sh');
-  if (!fs.existsSync(script)) {
-    updateScan(scan.id, { status: 'failed', log: `Missing runner: ${script}` });
+  const runner = path.join(ROOT_DIR, 'scripts', 'recon-runner.sh');
+
+  if (!fs.existsSync(runner)) {
+    updateScan(scan.id, { status: 'failed', log: `Missing runner: ${runner}` });
     return;
   }
 
-  const args = [script, scan.target, '--out', scan.output_dir];
-  const child = spawn('bash', args, { cwd: ROOT_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
-  let log = '';
-  const append = (chunk) => {
-    log = `${log}${chunk}`.slice(-20000);
-    updateScan(scan.id, { log });
-    String(chunk).split('\n').filter(Boolean).forEach((line) => {
-      if (!line.startsWith('STAGE_EVENT|')) return;
-      const [, key, status, message = ''] = line.split('|');
-      const fields = { status, message };
-      if (status === 'running') fields.started_at = new Date().toISOString();
-      if (['completed', 'failed', 'skipped'].includes(status)) fields.completed_at = new Date().toISOString();
-      updateStage(scan.id, key, fields);
-    });
+  const args = [runner, scan.target, '--out', path.join(ROOT_DIR, scan.output_dir)];
+  const proc = spawn('bash', args, {
+    cwd: ROOT_DIR,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let logBuffer = '';
+
+  const handleStream = (chunk) => {
+    const text = String(chunk);
+    logBuffer = `${logBuffer}${text}`.slice(-20000);
+    updateScan(scan.id, { log: logBuffer });
+
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.startsWith('STAGE_EVENT|')) continue;
+      const parts = line.split('|');
+      if (parts.length < 4) continue;
+      const [, key, status, message = ''] = parts;
+      const payload = { status, message };
+      if (status === 'running') payload.started_at = new Date().toISOString();
+      if (['completed', 'failed', 'skipped'].includes(status)) payload.completed_at = new Date().toISOString();
+      updateStage(scan.id, key, payload);
+    }
   };
-  child.stdout.on('data', append);
-  child.stderr.on('data', append);
-  child.on('error', (error) => updateScan(scan.id, { status: 'failed', log: `${log}\n${error.message}` }));
-  child.on('close', (code) => {
-    const summary = readFile(path.join(ROOT_DIR, scan.output_dir, 'findings', 'findings.json'));
-    updateScan(scan.id, { status: code === 0 ? 'completed' : 'failed', summary, log: `${log}\nProcess exited with code ${code}` });
+
+  proc.stdout.on('data', handleStream);
+  proc.stderr.on('data', handleStream);
+
+  proc.on('error', (error) => {
+    updateScan(scan.id, { status: 'failed', log: `${logBuffer}\n${error.message}` });
+  });
+
+  proc.on('close', (code) => {
+    const findingsPath = path.join(ROOT_DIR, scan.output_dir, 'findings', 'findings.json');
+    const summary = readJsonIfExists(findingsPath);
+    updateScan(scan.id, {
+      status: code === 0 ? 'completed' : 'failed',
+      summary: summary || '{}',
+      log: `${logBuffer}\nProcess exited with code ${code}`,
+    });
   });
 }
 
 app.get('/api/health', (_, res) => res.json({ ok: true, service: 'elite-recon-dashboard' }));
-app.get('/api/scans', (_, res) => db.all('SELECT * FROM scans ORDER BY created_at DESC', [], (error, rows) => error ? res.status(500).json({ error: error.message }) : res.json({ scans: rows })));
-app.get('/api/scans/:id', (req, res) => db.get('SELECT * FROM scans WHERE id = ?', [req.params.id], (error, scan) => {
-  if (error) return res.status(500).json({ error: error.message });
-  if (!scan) return res.status(404).json({ error: 'Scan not found' });
-  db.all('SELECT * FROM scan_stages WHERE scan_id = ? ORDER BY phase', [req.params.id], (stageError, stages) => {
-    if (stageError) return res.status(500).json({ error: stageError.message });
-    res.json({ scan, stages });
+
+app.get('/api/scans', (_, res) => {
+  db.all('SELECT * FROM scans ORDER BY created_at DESC', [], (error, rows) => {
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ scans: rows });
   });
-}));
-app.get('/api/scans/:id/report', (req, res) => db.get('SELECT output_dir, target FROM scans WHERE id = ?', [req.params.id], (error, scan) => {
-  if (error) return res.status(500).json({ error: error.message });
-  if (!scan) return res.status(404).json({ error: 'Scan not found' });
-  const reportPath = path.resolve(ROOT_DIR, scan.output_dir, 'report', 'report.md');
-  if (!reportPath.startsWith(`${ROOT_DIR}${path.sep}`) || !fs.existsSync(reportPath)) return res.status(404).json({ error: 'Report not available yet' });
-  res.download(reportPath, `${scan.target}-report.md`);
-}));
+});
+
+app.get('/api/scans/:id', (req, res) => {
+  db.get('SELECT * FROM scans WHERE id = ?', [req.params.id], (error, scan) => {
+    if (error) return res.status(500).json({ error: error.message });
+    if (!scan) return res.status(404).json({ error: 'Scan not found' });
+    db.all('SELECT * FROM scan_stages WHERE scan_id = ? ORDER BY phase', [req.params.id], (stageError, stages) => {
+      if (stageError) return res.status(500).json({ error: stageError.message });
+      res.json({ scan, stages });
+    });
+  });
+});
+
 app.post('/api/scans', (req, res) => {
   const { target, scopeFile = '', resumeDir = '', diffDir = '', aggressive = false } = req.body || {};
-  const cleanedTarget = cleanTarget(target);
-  if (!validTarget(cleanedTarget)) return res.status(400).json({ error: 'Enter a valid hostname such as example.com.' });
-  const outputDir = resumeDir || outputName(cleanedTarget);
-  const record = { target: cleanedTarget, status: 'queued', output_dir: outputDir, aggressive: aggressive ? 1 : 0, scope_file: scopeFile, resume_dir: resumeDir, diff_dir: diffDir };
-  db.run('INSERT INTO scans (target, status, output_dir, aggressive, scope_file, resume_dir, diff_dir, log, summary) VALUES (?, ?, ?, ?, ?, ?, ?, "", "{}")', Object.values(record), function (error) {
-    if (error) return res.status(500).json({ error: error.message });
-    const scan = { id: this.lastID, ...record };
-    createStages(scan.id);
-    updateScan(scan.id, { status: 'running', log: `Starting staged pipeline for ${scan.target}` });
-    startScan(scan);
-    res.status(201).json({ scan });
-  });
+  const cleaned = cleanTarget(target);
+
+  if (!validTarget(cleaned)) {
+    return res.status(400).json({ error: 'Enter a valid domain such as example.com.' });
+  }
+
+  const outputDir = resumeDir || outputName(cleaned);
+  const record = {
+    target: cleaned,
+    status: 'queued',
+    output_dir: outputDir,
+    aggressive: aggressive ? 1 : 0,
+    scope_file: scopeFile,
+    resume_dir: resumeDir,
+    diff_dir: diffDir,
+  };
+
+  db.run(
+    'INSERT INTO scans (target, status, output_dir, aggressive, scope_file, resume_dir, diff_dir, log, summary) VALUES (?, ?, ?, ?, ?, ?, ?, "", "{}")',
+    [record.target, record.status, record.output_dir, record.aggressive, record.scope_file, record.resume_dir, record.diff_dir],
+    function (error) {
+      if (error) return res.status(500).json({ error: error.message });
+      const scan = { id: this.lastID, ...record };
+      createStages(scan.id);
+      updateScan(scan.id, { status: 'running', log: `Queued and starting staged scan for ${scan.target}` });
+      startScan(scan);
+      res.status(201).json({ scan });
+    }
+  );
 });
 
 if (fs.existsSync(path.join(ROOT_DIR, 'dist'))) {
   app.use(express.static(path.join(ROOT_DIR, 'dist')));
-  app.get('*', (req, res, next) => req.path.startsWith('/api') ? next() : res.sendFile(path.join(ROOT_DIR, 'dist', 'index.html')));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(ROOT_DIR, 'dist', 'index.html'));
+  });
 }
 
 app.listen(PORT, () => console.log(`Recon dashboard API running on http://localhost:${PORT}`));
+
+export default app;

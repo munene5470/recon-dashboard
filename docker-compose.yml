@@ -2,9 +2,9 @@ services:
   recon-dashboard:
     build: .
     ports:
-      - "3000:3000"
+      - "4000:4000"
     environment:
-      PORT: 3000
+      PORT: 4000
       NODE_ENV: production
     volumes:
       - ./data:/app/data

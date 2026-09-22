@@ -3,26 +3,64 @@ set -euo pipefail
 
 TARGET=""
 OUT=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --out) [[ $# -ge 2 ]] || { echo "--out requires a directory" >&2; exit 2; }; OUT="$2"; shift 2 ;;
-    -h|--help) echo "Usage: $0 <domain> --out <directory>"; exit 0 ;;
-    -*) echo "Unknown option: $1" >&2; exit 2 ;;
-    *) [[ -z "$TARGET" ]] && { TARGET="$1"; shift; } || { echo "Unexpected extra argument: $1" >&2; exit 2; } ;;
+    --out)
+      [[ $# -ge 2 ]] || { echo "--out requires a directory" >&2; exit 2; }
+      OUT="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 <domain> --out <directory>"
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$TARGET" ]]; then
+        TARGET="$1"
+        shift
+      else
+        echo "Unexpected extra argument: $1" >&2
+        exit 2
+      fi
+      ;;
   esac
 done
-[[ -n "$TARGET" && -n "$OUT" ]] || { echo "Target and --out are required" >&2; exit 2; }
-[[ "$TARGET" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid target" >&2; exit 2; }
 
-mkdir -p "$OUT"/{logs,findings,report,subs,dns,alive}
-log(){ echo "[$(date +%H:%M:%S)] $1" | tee -a "$OUT/logs/run.log"; }
-event(){ echo "STAGE_EVENT|$1|$2|$3"; }
+[[ -n "$TARGET" && -n "$OUT" ]] || { echo "Target and --out are required" >&2; exit 2; }
+[[ "$TARGET" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid target: $TARGET" >&2; exit 2; }
+
+mkdir -p "$OUT"/{logs,findings,report,subs,dns,alive,ports,crawl,params,tech,tls,api,graphql,headers,cors,vulns,403,idor,takeover,secrets,report}
+
+log(){
+  echo "[$(date +%H:%M:%S)] $1" | tee -a "$OUT/logs/run.log"
+}
+
+stage(){
+  echo "STAGE_EVENT|$1|$2|$3"
+}
 
 log "Staged pipeline started for $TARGET"
-event 01-subdomains running "Stage 1 smoke foundation"
+stage "01-subdomains" "running" "Stage 1 smoke foundation"
 printf '%s\n' "$TARGET" > "$OUT/subs/all.txt"
-echo '{"tools":{},"total_unique":1,"consensus":{}}' > "$OUT/subs/comparison.json"
-event 01-subdomains completed "Foundation ready; enumeration tools will be added in the next stage"
+cat > "$OUT/subs/comparison.json" <<EOF
+{
+  "total_unique": 1,
+  "by_tool": {
+    "seed": 1
+  },
+  "consensus": {
+    "found_by_3_or_more_tools": [],
+    "found_by_2_tools": [],
+    "found_by_1_tool": ["$TARGET"]
+  }
+}
+EOF
+stage "01-subdomains" "completed" "Foundation ready; enumeration tools will be added in the next stage"
 
 for entry in \
   '02-dns|Waiting for Phase 1 outputs' \
@@ -40,10 +78,28 @@ for entry in \
   '14-secrets|Waiting for JavaScript and git outputs' \
   '15-nuclei|Waiting for discovery outputs' \
   '16-report|Waiting for completed stages'; do
-  key="${entry%%|*}"; message="${entry#*|}"; event "$key" skipped "$message"; done
+  key="${entry%%|*}"
+  message="${entry#*|}"
+  stage "$key" "skipped" "$message"
+done
 
 cat > "$OUT/findings/findings.json" <<EOF
-{"target":"$TARGET","generated":"$(date -Iseconds)","pipeline_status":"foundation-complete","findings":{}}
+{
+  "target": "$TARGET",
+  "generated": "$(date -Iseconds)",
+  "pipeline_status": "foundation-complete",
+  "findings": {}
+}
 EOF
-printf '# Recon Report\n\nTarget: %s\n\nFoundation stage completed.\n' "$TARGET" > "$OUT/report/report.md"
+
+cat > "$OUT/report/report.md" <<EOF
+# Recon Report
+
+Target: $TARGET
+
+Pipeline foundation completed successfully.
+
+This is the safe staged foundation for the dashboard. Real enumeration and security tools are intentionally staged behind the dependency pipeline.
+EOF
+
 log "Foundation pipeline completed"
