@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-TARGET="${1:-}"
+TARGET=""
 SCOPE_FILE=""; RESUME_DIR=""; DIFF_DIR=""; AGGRESSIVE=false
 usage(){ echo "Usage: $0 <domain> [--scope FILE] [--resume DIR] [--diff DIR] [--aggressive]"; }
 while [[ $# -gt 0 ]]; do case "$1" in --scope) SCOPE_FILE="${2:-}"; shift 2;; --resume) RESUME_DIR="${2:-}"; shift 2;; --diff) DIFF_DIR="${2:-}"; shift 2;; --aggressive) AGGRESSIVE=true; shift;; -h|--help) usage; exit 0;; *) [[ -z "$TARGET" ]] && { TARGET="$1"; shift; } || { echo "Unknown argument: $1"; exit 1; };; esac; done
