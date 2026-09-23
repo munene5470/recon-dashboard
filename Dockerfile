@@ -1,4 +1,4 @@
-FROM golang:1.25-bookworm AS go-runtime
+FROM golang:1.26-bookworm AS go-runtime
 
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
@@ -13,9 +13,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=4000
-ENV PATH=/usr/local/go/bin:/usr/local/bin:/root/go/bin:$PATH
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/root/go/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV GOBIN=/usr/local/bin
 ENV GOPATH=/root/go
+ENV GOTOOLCHAIN=auto
 
 COPY --from=go-runtime /usr/local/go /usr/local/go
 
@@ -36,6 +37,7 @@ RUN apt-get update \
         wget \
         whois \
         whatweb \
+        zip \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
