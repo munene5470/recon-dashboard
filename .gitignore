@@ -5,3 +5,6 @@ dist/
 .DS_Store
 *.log
 /data/
+
+recon-output/
+data/
