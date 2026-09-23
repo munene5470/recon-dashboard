@@ -4,7 +4,9 @@ set -Eeuo pipefail
 export PATH="/usr/local/go/bin:/usr/local/bin:/root/go/bin:${PATH:-}"
 export GOBIN=/usr/local/bin
 export GOPATH=/root/go
-export GOTOOLCHAIN=local
+# Allow Go to select/download a newer toolchain when a @latest dependency
+# requires one newer than the base image toolchain.
+export GOTOOLCHAIN=auto
 
 install_go_tool() {
   local name="$1"
