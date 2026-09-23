@@ -29,7 +29,7 @@ require_command() {
   }
 }
 
-echo "[tools] ${go version}"
+echo "[tools] $(go version)"
 
 # Passive discovery and DNS.
 install_go_tool subfinder github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
